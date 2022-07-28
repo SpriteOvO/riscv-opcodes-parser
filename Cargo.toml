@@ -3,4 +3,16 @@ name = "riscv-opcodes-parser"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "rvop"
+path = "src/main.rs"
+
+[lib]
+name = "rvop"
+
 [dependencies]
+anyhow = "1.0.58"
+chumsky = "0.8.0"
+num-traits = "0.2.15"
+
+[features]
