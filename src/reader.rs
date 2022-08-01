@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    cmp::Ordering,
+    collections::BTreeMap,
     convert::identity,
     fmt::Display,
     fs,
@@ -10,7 +11,7 @@ use anyhow::{bail, Result as AnyhowResult};
 use globset::GlobBuilder;
 use walkdir::{DirEntry as WalkDirEntry, Error as WalkDirErr, WalkDir};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpcodesFileName {
     Ratified(String),
     Unratified(String),
@@ -29,6 +30,55 @@ impl OpcodesFileName {
 impl Display for OpcodesFileName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+impl Ord for OpcodesFileName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        const PRIORITIES: [&str; 4] = ["rv_", "rv32_", "rv64_", "rv128_"];
+
+        match (self, other) {
+            (Self::Ratified(_), Self::Unratified(_)) => return Ordering::Less,
+            (Self::Unratified(_), Self::Ratified(_)) => return Ordering::Greater,
+            _ => {}
+        }
+
+        let get_priority = |name: &str| {
+            PRIORITIES
+                .into_iter()
+                .enumerate()
+                .find(|(_, prefix)| name.starts_with(prefix))
+                .map(|(priority, prefix)| (priority, Some(prefix)))
+                .unwrap_or((usize::MAX, None))
+        };
+
+        let (self_priority, other_priority) =
+            (get_priority(self.name()), get_priority(other.name()));
+
+        let ord = self_priority.0.cmp(&other_priority.0);
+
+        if ord != Ordering::Equal {
+            ord
+        } else {
+            match (self_priority.1, other_priority.1) {
+                (Some(self_prefix), Some(other_prefix)) => {
+                    assert_eq!(self_prefix, other_prefix);
+
+                    self.name()
+                        .strip_prefix(self_prefix)
+                        .unwrap()
+                        .cmp(other.name().strip_prefix(other_prefix).unwrap())
+                }
+                (None, None) => self.name().cmp(other.name()),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+impl PartialOrd for OpcodesFileName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -62,7 +112,7 @@ impl Reader {
     pub fn read_by_glob(
         &self,
         glob: impl AsRef<str>,
-    ) -> AnyhowResult<HashMap<OpcodesFileName, String>> {
+    ) -> AnyhowResult<BTreeMap<OpcodesFileName, String>> {
         let glob = GlobBuilder::new(glob.as_ref())
             .literal_separator(true)
             .build()?
@@ -73,7 +123,7 @@ impl Reader {
             .into_iter()
             .filter(|f| glob.is_match(f.strip_prefix(&self.root).unwrap()))
             .map(|f| fs::read_to_string(&f).map(|c| (f, c)))
-            .collect::<Result<HashMap<_, _>, _>>()?
+            .collect::<Result<BTreeMap<_, _>, _>>()?
             .into_iter()
             .map(|(file, contents)| {
                 let file = file.strip_prefix(&self.root).unwrap();
@@ -142,6 +192,14 @@ mod tests {
     use super::*;
     use crate::Fetcher;
 
+    fn ratified_name(name: &str) -> OpcodesFileName {
+        OpcodesFileName::Ratified(name.to_string())
+    }
+
+    fn unratified_name(name: &str) -> OpcodesFileName {
+        OpcodesFileName::Unratified(name.to_string())
+    }
+
     #[test]
     fn expected_files() {
         let fetcher = Fetcher::new().unwrap();
@@ -191,9 +249,6 @@ mod tests {
         assert_file!(file: "rv_c", contains: "c.addi");
         assert_file!(file: "rv64_i", contains: "addw");
 
-        let ratified_name = |name: &str| OpcodesFileName::Ratified(name.to_string());
-        let unratified_name = |name: &str| OpcodesFileName::Unratified(name.to_string());
-
         fs::write(
             fetcher.opcodes_dir().join("unratified/rv_test_file"),
             "test_text",
@@ -219,5 +274,29 @@ mod tests {
                        ratified_name("rv_a"), ratified_name("rv_c"), ratified_name("rv_i"),
                        ratified_name("rv_test_file")]
         };
+    }
+
+    #[test]
+    fn opcodes_file_name_ordering() {
+        use ratified_name as ratified;
+        use unratified_name as unratified;
+        use Ordering::*;
+
+        assert_eq!(ratified("rv32_").cmp(&unratified("rv128_")), Less);
+        assert_eq!(ratified("rv128_").cmp(&unratified("rv32_")), Less);
+        assert_eq!(unratified("rv32_").cmp(&ratified("rv128_")), Greater);
+        assert_eq!(unratified("rv128_").cmp(&ratified("rv32_")), Greater);
+
+        assert_eq!(ratified("rv32_").cmp(&ratified("rv128_")), Less);
+        assert_eq!(unratified("rv32_").cmp(&unratified("rv128_")), Less);
+        assert_eq!(ratified("rv128_").cmp(&ratified("rv32_")), Greater);
+        assert_eq!(unratified("rv128_").cmp(&unratified("rv32_")), Greater);
+
+        assert_eq!(ratified("rv32_").cmp(&ratified("rv32_")), Equal);
+        assert_eq!(unratified("rv32_").cmp(&unratified("rv32_")), Equal);
+
+        assert_eq!(ratified("rv32_a").cmp(&ratified("rv32_b")), Less);
+        assert_eq!(ratified("rv32_b").cmp(&ratified("rv32_a")), Greater);
+        assert_eq!(ratified("rv32_a").cmp(&ratified("rv32_a")), Equal);
     }
 }

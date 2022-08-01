@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{collections::BTreeMap, env, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser as CliParser;
@@ -117,7 +117,7 @@ pub fn exec(cli: Cli) -> Result<()> {
         .into_iter()
         .inspect(|(file_name, _)| info!("Parsing opcodes file: '{file_name}'"))
         .map(|file| opcodes_parse(file.1).map(|r| (file.0, r)))
-        .collect::<Result<HashMap<_, _>>>()?;
+        .collect::<Result<BTreeMap<_, _>>>()?;
 
     todo!()
 }
