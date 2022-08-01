@@ -1,6 +1,12 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    convert::identity,
+    fmt::Display,
+    fs,
+    path::{Path, PathBuf},
+};
 
-use anyhow::Result as AnyhowResult;
+use anyhow::{bail, Result as AnyhowResult};
 use globset::GlobBuilder;
 use walkdir::{DirEntry as WalkDirEntry, Error as WalkDirErr, WalkDir};
 
@@ -20,13 +26,37 @@ impl OpcodesFileName {
     }
 }
 
+impl Display for OpcodesFileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 pub struct Reader {
     root: PathBuf,
 }
 
 impl Reader {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+    pub fn new(root: impl Into<PathBuf>) -> AnyhowResult<Self> {
+        let root = root.into();
+
+        if !Self::is_opcodes_dir(&root) {
+            bail!(
+                "'{}' is not a recognizable RISC-V opcodes directory",
+                root.display()
+            )
+        }
+
+        Ok(Self { root })
+    }
+
+    fn is_opcodes_dir(path: impl AsRef<Path>) -> bool {
+        let path = path.as_ref();
+
+        ["rv_i", "rv32_c", "rv64_a"]
+            .iter()
+            .map(|name| path.join(name).exists())
+            .all(identity)
     }
 
     pub fn read_by_glob(
@@ -115,7 +145,7 @@ mod tests {
     #[test]
     fn expected_files() {
         let fetcher = Fetcher::new().unwrap();
-        let reader = Reader::new(&fetcher.opcodes_dir());
+        let reader = Reader::new(&fetcher.opcodes_dir()).unwrap();
         let opcodes_files = reader.opcodes_files().unwrap();
 
         macro_rules! assert_file {

@@ -1,5 +1,6 @@
 pub mod opcodes;
 
+pub mod cli;
 mod fetcher;
 mod parser;
 mod reader;
